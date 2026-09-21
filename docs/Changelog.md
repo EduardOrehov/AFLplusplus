@@ -3,6 +3,12 @@
   This is the list of all noteworthy changes made in every public
   release of the tool. See README.md for the general instruction manual.
 
+### Version ++5.04a (dev)
+  - afl-cc
+    - fix: a plain `-fcf-protection` (part of the default hardened CFLAGS on
+      Fedora/RHEL) was mistaken for `AFL_USE_CFISAN` and injected `-flto`,
+      which silently disabled PCGUARD instrumentation of the target
+
 ### Version ++5.03c (release)
   ! Value Profile implementation for AFL++ by Khaled Yakdan (@kyakdan) that
     is much more efficient and intelligent than the libfuzzer implementation.
