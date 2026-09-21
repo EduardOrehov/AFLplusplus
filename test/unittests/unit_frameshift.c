@@ -262,10 +262,13 @@ static void test_lightweight_run_deadline_and_fault(void **state) {
   assert_int_equal(lightweight_run(afl, buf, sizeof(buf)), 2);
   assert_int_equal(g_run_calls, 0);
 
+  /* The stage deadline bounds the stage, not the execution: a run started
+     just before it still gets the full exec timeout, or a target that takes
+     milliseconds would come back FSRV_RUN_TMOUT and be filed as a hang. */
   g_time = 900;
   afl->frameshift_deadline = 1000;
   assert_int_equal(lightweight_run(afl, buf, sizeof(buf)), 1);
-  assert_int_equal(g_timeout, 100);
+  assert_int_equal(g_timeout, 500);
 
   g_time = 0;
   afl->frameshift_deadline = 1000;

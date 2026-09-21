@@ -305,32 +305,39 @@ fi
 run_afl "${WORKDIR}/out_default" -J
 DEFSTATE="$(stats_of "${WORKDIR}/out_default")"
 DEFMODE="$(echo "${DEFSTATE}" | grep -E '^state_mode *:' | sed 's/.*: *//')"
-if [ "${DEFMODE}" = "dcb" ]; then
+if [ "${DEFMODE}" = "dcbm" ]; then
 
   ok "bare -J selects the measured default set (${DEFMODE})"
 
 else
 
-  fail "bare -J reported state_mode '${DEFMODE}', expected 'dcb'"
+  fail "bare -J reported state_mode '${DEFMODE}', expected 'dcbm'"
 
 fi
 
-LEAKED=""
+# The high-water channel is part of the default set, so its stats have to be
+# there. The watchdog is not, and it reports nothing but its own letter.
+MISSING=""
 for key in hw_only_saves hw_credits hw_slots; do
 
-  if has_key "${key}" "${DEFSTATE}"; then LEAKED="${LEAKED} ${key}"; fi
+  if ! has_key "${key}" "${DEFSTATE}"; then MISSING="${MISSING} ${key}"; fi
 
 done
 
-if [ -n "${LEAKED}" ]; then
+if [ -n "${MISSING}" ]; then
 
-  fail "bare -J reported stats for letters it does not enable:${LEAKED}"
+  fail "bare -J did not report the high-water stats it enables:${MISSING}"
 
 else
 
-  ok "bare -J reports nothing for the letters it leaves off"
+  ok "bare -J reports the stats for every letter it enables"
 
 fi
+
+case "${DEFMODE}" in
+  *w*) fail "bare -J enabled the watchdog (${DEFMODE})" ;;
+  *) ok "bare -J leaves the watchdog off" ;;
+esac
 
 # Time accounting is no longer implied by -J.
 if has_key "target_time_pct" "${STATE}"; then

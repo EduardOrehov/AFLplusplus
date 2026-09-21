@@ -117,6 +117,13 @@ is small next to a real protocol target's execution. Measured on Samba's SMB2
 server harness, whose coverage map is 403,392 bytes, seven declared positions
 take the map to 2,893,376 bytes — a 6.1× expansion for **4.3 % of throughput**.
 
+Separation only exists while the map actually holds the `N + 1` regions, so
+`IJON_STATE()` keeps the state in region 0 whenever it does not: under
+`AFL_NO_IJON` or `AFL_DISABLE_LLVM_INSTRUMENTATION`, and in a target
+constructor that runs before AFL's shared map is set up. Such a run records
+plain coverage instead of state-separated coverage; it does not index past the
+map.
+
 Before reaching for it, consider `IJON_MAX_AT(slot + position, work_done)` on
 the same position ladder: it needs no rebuild flag, no map expansion and no
 declaration, and on an nginx QUIC/HTTP-3 harness it drove inputs measurably

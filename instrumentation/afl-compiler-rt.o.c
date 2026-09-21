@@ -231,6 +231,14 @@ static u8  __afl_area_initial[MAP_INITIAL_SIZE];
 static u8 *__afl_area_ptr_dummy = __afl_area_initial;
 static u8 *__afl_area_ptr_backup = __afl_area_initial;
 
+/* How many bytes __afl_area_ptr_dummy actually holds. Coverage writes land in
+   the dummy whenever no shared map is attached - a standalone run,
+   AFL_LLVM_ONLY_FSRV, and everything that executes after __AFL_LOOP() ends -
+   so it has to be at least __afl_map_size, which with
+   AFL_LLVM_IJON_STATE_MAX is cov_size * (state_max + 1) plus the IJON areas
+   and not just the coverage region. */
+static u32 __afl_dummy_map_size = MAP_INITIAL_SIZE;
+
 u8  *__afl_area_ptr = __afl_area_initial;
 u8  *__afl_dictionary;
 u32 *__afl_child_sync = NULL;
@@ -285,11 +293,62 @@ u32                                    __afl_ijon_state_max = 0;
 
 static void __afl_ijon_state_max_init(void) {
 
+  static u8 done;
+
+  if (likely(done)) { return; }
+  done = 1;
+
   if (&__afl_ijon_state_max_decl) {
 
     __afl_ijon_state_max = __afl_ijon_state_max_decl;
 
   }
+
+}
+
+/* Make the dummy map cover every index the instrumentation can produce.
+   Called after each place that settles __afl_map_size, and before the bug map
+   is bound, because a grow moves the region the bug map lives in. */
+
+static void __afl_grow_dummy_map(void) {
+
+  if (likely(__afl_map_size <= __afl_dummy_map_size)) { return; }
+
+  u8 *ptr = (u8 *)calloc(1, __afl_map_size);
+
+  if (!ptr) {
+
+    fprintf(stderr,
+            "Error: AFL++ could not acquire %u bytes of memory, exiting!\n",
+            __afl_map_size);
+    exit(-1);
+
+  }
+
+  u8 *old = __afl_area_ptr_dummy;
+
+  __afl_area_ptr_dummy = ptr;
+  __afl_dummy_map_size = __afl_map_size;
+
+  if (__afl_area_ptr == old) { __afl_area_ptr = ptr; }
+  if (__afl_area_ptr_backup == old) { __afl_area_ptr_backup = ptr; }
+
+  if (old != __afl_area_initial) { free(old); }
+
+}
+
+/* Whether the map the instrumentation writes to holds one coverage region per
+   declared state. It does not while __afl_map_shm() has yet to run (a target
+   constructor can call IJON_STATE() first), nor under AFL_NO_IJON or
+   AFL_DISABLE_LLVM_INSTRUMENTATION, which leave the map unexpanded. Until it
+   does, the state has to stay in region 0: the instrumentation indexes
+   state * __afl_cov_map_size + edge with no way to find out. */
+
+static u8 __afl_ijon_state_regions_ready(void) {
+
+  return (u64)__afl_cov_map_size * ((u64)__afl_ijon_state_max + 1) <=
+             (u64)__afl_map_size &&
+         __afl_map_size <= __afl_dummy_map_size;
 
 }
 
@@ -1313,6 +1372,7 @@ static void __afl_map_shm(void) {
   if (!id_str && !fd_str) {
 
     u32 val = 0;
+    u32 expanded = __afl_ijon_map_increased ? __afl_map_size : 0;
     u8 *ptr;
 
     if ((ptr = getenv("AFL_MAP_SIZE")) != NULL) { val = atoi(ptr); }
@@ -1341,6 +1401,12 @@ static void __afl_map_shm(void) {
       __afl_final_loc = __afl_map_size;
 
     }
+
+    /* Neither AFL_MAP_SIZE nor MAP_INITIAL_SIZE may undercut the IJON
+       expansion worked out above: the instrumentation indexes the whole
+       expanded map, so shrinking it back here would make every write past
+       the coverage region land outside the buffer. */
+    if (expanded > __afl_map_size) { __afl_map_size = expanded; }
 
     if (__afl_debug) {
 
@@ -1618,7 +1684,12 @@ static void __afl_map_shm(void) {
 
     }
 
-    __afl_map_size = __afl_final_loc + 1;
+    if (__afl_map_size < __afl_final_loc + 1) {
+
+      __afl_map_size = __afl_final_loc + 1;
+
+    }
+
     __afl_area_ptr_dummy = (u8 *)malloc(__afl_map_size);
     __afl_area_ptr = __afl_area_ptr_dummy;
 
@@ -1631,8 +1702,11 @@ static void __afl_map_shm(void) {
 
     }
 
+    __afl_dummy_map_size = __afl_map_size;
+
   }  // else: nothing to be done
 
+  __afl_grow_dummy_map();
   __afl_area_ptr_backup = __afl_area_ptr;
   __afl_bug_bind_map();
 
@@ -1663,9 +1737,10 @@ static void __afl_map_shm(void) {
 
   if (__afl_selective_coverage) {
 
-    if (__afl_map_size > MAP_INITIAL_SIZE) {
+    if (__afl_map_size > __afl_dummy_map_size) {
 
       __afl_area_ptr_dummy = (u8 *)malloc(__afl_map_size);
+      __afl_dummy_map_size = __afl_area_ptr_dummy ? __afl_map_size : 0;
 
     }
 
@@ -2077,6 +2152,7 @@ static void __afl_start_forkserver(void) {
     __afl_set_map_size = __afl_map_size - MAP_SIZE_IJON_BYTES;
     __afl_ijon_map_increased = 1;
     __afl_bug_append_map();
+    __afl_grow_dummy_map();
     __afl_bug_bind_map();
 
   } else if (!__afl_cov_map_size) {
@@ -2789,6 +2865,7 @@ __attribute__((constructor(1))) void __afl_auto_second(void) {
       __afl_area_ptr = ptr;
       __afl_area_ptr_dummy = __afl_area_ptr;
       __afl_area_ptr_backup = __afl_area_ptr;
+      __afl_dummy_map_size = __afl_first_final_loc;
 
       if (old_area && old_area != __afl_area_initial) free(old_area);
 
@@ -3551,6 +3628,7 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
 
     __afl_bug_configure_runtime();
     __afl_bug_append_map();
+    __afl_grow_dummy_map();
     __afl_bug_bind_map();
 
     if (__afl_debug) {
@@ -6075,7 +6153,21 @@ void afl_autostate_set(uint32_t slot, uint32_t val) {
       __afl_autostate_mix(slot, old) ^ __afl_autostate_mix(slot, val);
   ++__afl_autostate_updates;
 
-  __afl_ijon_state = __afl_autostate_digest % (u32)MAP_SIZE_IJON_MAP;
+  /* With AFL_LLVM_IJON_STATE_MAX the state is a region index, so the digest
+     has to be folded into the declared range - the instrumentation multiplies
+     it by the coverage map size. */
+  __afl_ijon_state_max_init();
+
+  if (__afl_ijon_state_max) {
+
+    if (unlikely(!__afl_ijon_state_regions_ready())) { return; }
+    __afl_ijon_state = __afl_autostate_digest % (__afl_ijon_state_max + 1);
+
+  } else {
+
+    __afl_ijon_state = __afl_autostate_digest % (u32)MAP_SIZE_IJON_MAP;
+
+  }
 
 }
 
@@ -6090,7 +6182,14 @@ void afl_autostate_reset(void) {
 
 void ijon_xor_state(uint32_t val) {
 
+  /* A target constructor can reach this before __afl_map_shm() has read the
+     declared maximum. Without it the XOR branch below would hand the
+     instrumentation a state far past the declared range. */
+  __afl_ijon_state_max_init();
+
   if (__afl_ijon_state_max) {
+
+    if (unlikely(!__afl_ijon_state_regions_ready())) { return; }
 
     /* Declared-state mode: the argument IS the state, not something to XOR in.
        Out of range is fatal on purpose - a modulo here would silently

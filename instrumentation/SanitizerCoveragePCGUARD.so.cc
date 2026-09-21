@@ -928,8 +928,15 @@ void ModuleSanitizerCoverageAFL::emitPathCoverage(Function &F) {
 
         /* One dedicated map region per state: idx = state*cov_size + edge.
            A perfect 2-D index, so a state-relabelled edge can never collide
-           with a real one, and region 0 is byte-identical to a plain build. */
-        Value *Base = IRB.CreateMul(IJONStateVal, CovMapSize);
+           with a real one, and region 0 is byte-identical to a plain build.
+           The state is capped at the declared maximum because the map holds
+           exactly that many regions - a larger one would index past it. */
+        Value *State = IRB.CreateBinaryIntrinsic(
+            Intrinsic::umin, IJONStateVal,
+            ConstantInt::get(IJONStateVal->getType(),
+                             (uint64_t)ijon_state_max));
+        setNoInstrumentMetadata(State);
+        Value *Base = IRB.CreateMul(State, CovMapSize);
         CoverageIndex = IRB.CreateAdd(Base, CoverageIndex);
 
       } else {
@@ -1041,8 +1048,15 @@ void ModuleSanitizerCoverageAFL::updateCoverageForSelect(IRBuilder<> &IRB,
 
         /* One dedicated map region per state: idx = state*cov_size + edge.
            A perfect 2-D index, so a state-relabelled edge can never collide
-           with a real one, and region 0 is byte-identical to a plain build. */
-        Value *Base = IRB.CreateMul(IJONStateVal, CovMapSize);
+           with a real one, and region 0 is byte-identical to a plain build.
+           The state is capped at the declared maximum because the map holds
+           exactly that many regions - a larger one would index past it. */
+        Value *State = IRB.CreateBinaryIntrinsic(
+            Intrinsic::umin, IJONStateVal,
+            ConstantInt::get(IJONStateVal->getType(),
+                             (uint64_t)ijon_state_max));
+        setNoInstrumentMetadata(State);
+        Value *Base = IRB.CreateMul(State, CovMapSize);
         CoverageIndex = IRB.CreateAdd(Base, CoverageIndex);
 
       } else {
@@ -2367,8 +2381,15 @@ void ModuleSanitizerCoverageAFL::InjectCoverageAtBlock(Function   &F,
 
         /* One dedicated map region per state: idx = state*cov_size + edge.
            A perfect 2-D index, so a state-relabelled edge can never collide
-           with a real one, and region 0 is byte-identical to a plain build. */
-        Value *Base = IRB.CreateMul(IJONStateVal, CovMapSize);
+           with a real one, and region 0 is byte-identical to a plain build.
+           The state is capped at the declared maximum because the map holds
+           exactly that many regions - a larger one would index past it. */
+        Value *State = IRB.CreateBinaryIntrinsic(
+            Intrinsic::umin, IJONStateVal,
+            ConstantInt::get(IJONStateVal->getType(),
+                             (uint64_t)ijon_state_max));
+        setNoInstrumentMetadata(State);
+        Value *Base = IRB.CreateMul(State, CovMapSize);
         CoverageIndex = IRB.CreateAdd(Base, CoverageIndex);
 
       } else {
